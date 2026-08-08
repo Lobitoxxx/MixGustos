@@ -1,0 +1,440 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMERADOS
+// ============================================================
+
+enum Rol {
+  ADMINISTRADOR
+  GERENTE
+  MOZO_SALON
+  MOZO_PUERTA
+  COCINERO
+  ALMACENERO
+  CLIENTE
+}
+
+enum TipoPedido {
+  MESA
+  PARA_LLEVAR
+  PARA_RECOGER
+}
+
+enum EstadoPedido {
+  CREADO
+  CONFIRMADO
+  RECIBIDO_COCINA
+  EN_PREPARACION
+  LISTO
+  ENTREGADO
+  FINALIZADO
+  CANCELADO
+  RECHAZADO
+}
+
+enum EstadoItem {
+  SOLICITADO
+  EN_PREPARACION
+  LISTO
+  ENTREGADO
+  CANCELADO
+}
+
+enum EstadoMesa {
+  LIBRE
+  OCUPADA
+  RESERVADA
+}
+
+enum TipoMovimiento {
+  ENTRADA
+  SALIDA
+  MERMA
+  AJUSTE
+}
+
+enum TipoMerma {
+  VENCIDO
+  DANADO
+  DESPERDICIADO
+  ERROR_PREPARACION
+  OTRO
+}
+
+enum EstadoLote {
+  ACTIVO
+  AGOTADO
+  VENCIDO
+}
+
+enum EstadoCompra {
+  BORRADOR
+  ENVIADA
+  RECIBIDA
+  CANCELADA
+}
+
+enum TipoAlert {
+  VENCIDO
+  PROXIMO_VENCER
+  STOCK_MINIMO
+  REPOSICION
+  DIFERENCIA_CONSUMO
+}
+
+enum EstadoAlert {
+  NUEVA
+  VISTA
+  RESUELTA
+}
+
+// ============================================================
+// USUARIOS, ROLES Y PERMISOS
+// ============================================================
+
+model User {
+  id             String   @id @default(uuid())
+  username       String   @unique
+  email          String   @unique
+  password       String
+  rol            Rol
+  nombre         String
+  telefono       String?
+  foto           String?
+  activo         Boolean  @default(true)
+  preferencias   Json?
+  notificaciones Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ordersCreated  Order[]               @relation("createdBy")
+  ordersAssigned Order[]               @relation("assignedTo")
+  movements      InventoryMovement[]
+  mermas         Merma[]
+  purchaseOrders PurchaseOrder[]
+  alerts         Alert[]
+  orderHistory   OrderStatusHistory[]
+
+  @@index([rol])
+}
+
+model RolePermission {
+  id       String @id @default(uuid())
+  rol      Rol    @unique
+  permisos Json
+}
+
+model Setting {
+  id                  String   @id @default(uuid())
+  nombreRestaurante   String   @default("MixGustos")
+  moneda              String   @default("S/")
+  igv                 Float    @default(0.18)
+  metodoInventario    String   @default("FEFO")
+  diasProximosVencer  Int      @default(7)
+  umbralDiferencia    Float    @default(0.10)
+  ruc                 String?
+  direccion           String?
+  telefono            String?
+  horarioAtencion     String?
+  politicaFEFO        String?
+  updatedAt           DateTime @updatedAt
+}
+
+// ============================================================
+// CATALOGO: CATEGORIAS, PRODUCTOS, RECETAS
+// ============================================================
+
+model Category {
+  id          String    @id @default(uuid())
+  nombre      String
+  descripcion String?
+  orden       Int       @default(0)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+
+  @@unique([nombre])
+}
+
+model Product {
+  id            String   @id @default(uuid())
+  codigo        String   @unique
+  nombre        String
+  categoriaId   String
+  categoria     Category @relation(fields: [categoriaId], references: [id])
+  unidad        String   @default("und")
+  stockMinimo   Float    @default(0)
+  stockMaximo   Float?
+  costo         Float    @default(0)
+  precioVenta   Float    @default(0)
+  esVendible    Boolean  @default(false)
+  esPerecedero  Boolean  @default(true)
+  imagen        String?
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  lots               Lot[]
+  recipeItems        RecipeItem[] @relation("ingrediente")
+  recipeFor          Recipe?
+  movements          InventoryMovement[]
+  mermas             Merma[]
+  purchaseOrderItems PurchaseOrderItem[]
+  consumptions       Consumption[]
+  orderItems         OrderItem[]
+  alerts             Alert[]
+
+  @@index([categoriaId])
+  @@index([esVendible])
+}
+
+model Recipe {
+  id          String       @id @default(uuid())
+  productoId  String       @unique
+  producto    Product      @relation(fields: [productoId], references: [id])
+  descripcion String?
+  rendimiento Float        @default(1)
+  items       RecipeItem[] @relation("recetaItems")
+  createdAt   DateTime     @default(now())
+}
+
+model RecipeItem {
+  id             String   @id @default(uuid())
+  recetaId       String
+  receta         Recipe   @relation("recetaItems", fields: [recetaId], references: [id])
+  ingredienteId  String
+  ingrediente    Product  @relation("ingrediente", fields: [ingredienteId], references: [id])
+  cantidad       Float
+  createdAt      DateTime @default(now())
+
+  @@unique([recetaId, ingredienteId])
+}
+
+// ============================================================
+// OPERACION: MESAS Y PEDIDOS
+// ============================================================
+
+model Table {
+  id       String      @id @default(uuid())
+  numero   Int         @unique
+  nombre   String?
+  capacidad Int        @default(4)
+  estado   EstadoMesa  @default(LIBRE)
+  pedidos  Order[]
+
+  @@index([estado])
+}
+
+model Order {
+  id            String        @id @default(uuid())
+  codigo        String        @unique
+  tipo          TipoPedido
+  estado        EstadoPedido  @default(CREADO)
+  mesaId        String?
+  mesa          Table?        @relation(fields: [mesaId], references: [id])
+  clienteNombre String?
+  telefono      String?
+  observaciones String?
+  createdById   String
+  createdBy     User          @relation("createdBy", fields: [createdById], references: [id])
+  assignedToId  String?
+  assignedTo    User?         @relation("assignedTo", fields: [assignedToId], references: [id])
+  total         Float         @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items        OrderItem[]
+  history      OrderStatusHistory[]
+  consumptions Consumption[]
+
+  @@index([estado])
+  @@index([tipo])
+  @@index([mesaId])
+}
+
+model OrderItem {
+  id            String      @id @default(uuid())
+  orderId       String
+  order         Order       @relation(fields: [orderId], references: [id])
+  productoId    String
+  producto      Product     @relation(fields: [productoId], references: [id])
+  cantidad      Float
+  precio        Float
+  observaciones String?
+  estado        EstadoItem  @default(SOLICITADO)
+  consumido     Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  consumptions    Consumption[]
+  movements       InventoryMovement[]
+
+  @@index([orderId])
+}
+
+model OrderStatusHistory {
+  id        String        @id @default(uuid())
+  orderId   String
+  order     Order         @relation(fields: [orderId], references: [id])
+  estado    EstadoPedido
+  userId    String
+  user      User          @relation(fields: [userId], references: [id])
+  comentario String?
+  createdAt DateTime      @default(now())
+
+  @@index([orderId])
+}
+
+// ============================================================
+// ALMACEN: LOTES, MOVIMIENTOS, MERMAS, CONSUMO
+// ============================================================
+
+model Lot {
+  id               String       @id @default(uuid())
+  codigo           String       @unique
+  productoId       String
+  producto         Product      @relation(fields: [productoId], references: [id])
+  cantidadInicial  Float
+  cantidadActual   Float
+  fechaIngreso     DateTime
+  fechaVencimiento DateTime?
+  costoUnitario    Float        @default(0)
+  estado           EstadoLote   @default(ACTIVO)
+  createdAt        DateTime     @default(now())
+
+  movements InventoryMovement[]
+  mermas    Merma[] @relation("mermaLot")
+
+  @@index([productoId])
+  @@index([fechaVencimiento])
+}
+
+model InventoryMovement {
+  id          String          @id @default(uuid())
+  lotId       String?
+  lot         Lot?            @relation(fields: [lotId], references: [id])
+  productoId  String
+  producto    Product         @relation(fields: [productoId], references: [id])
+  tipo        TipoMovimiento
+  cantidad    Float
+  motivo      String?
+  userId      String
+  user        User            @relation(fields: [userId], references: [id])
+  orderItemId String?
+  orderItem   OrderItem?      @relation(fields: [orderItemId], references: [id])
+  mermaId     String?
+  merma       Merma?          @relation(fields: [mermaId], references: [id])
+  createdAt   DateTime        @default(now())
+
+  @@index([productoId])
+  @@index([lotId])
+  @@index([createdAt])
+}
+
+model Merma {
+  id          String        @id @default(uuid())
+  productoId  String
+  producto    Product       @relation(fields: [productoId], references: [id])
+  cantidad    Float
+  tipo        TipoMerma
+  motivo      String?
+  costo       Float         @default(0)
+  lotId       String?
+  lot         Lot?          @relation("mermaLot", fields: [lotId], references: [id])
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  movements   InventoryMovement[]
+  createdAt   DateTime      @default(now())
+
+  @@index([productoId])
+  @@index([tipo])
+}
+
+model Consumption {
+  id             String     @id @default(uuid())
+  orderItemId    String
+  orderItem      OrderItem  @relation(fields: [orderItemId], references: [id])
+  orderId        String
+  order          Order      @relation(fields: [orderId], references: [id])
+  productoId     String
+  producto       Product    @relation(fields: [productoId], references: [id])
+  cantidadTeorica Float
+  cantidadReal   Float
+  lotId          String?
+  createdAt      DateTime   @default(now())
+
+  @@index([productoId])
+  @@index([orderId])
+}
+
+// ============================================================
+// COMPRAS
+// ============================================================
+
+model Supplier {
+  id             String         @id @default(uuid())
+  nombre         String
+  ruc            String?
+  telefono       String?
+  email          String?
+  direccion      String?
+  activo         Boolean        @default(true)
+  purchaseOrders PurchaseOrder[]
+  createdAt      DateTime       @default(now())
+}
+
+model PurchaseOrder {
+  id             String             @id @default(uuid())
+  numero         String             @unique
+  proveedorId    String
+  proveedor      Supplier           @relation(fields: [proveedorId], references: [id])
+  estado         EstadoCompra       @default(BORRADOR)
+  fechaPedido    DateTime           @default(now())
+  fechaEsperada  DateTime?
+  fechaRecepcion DateTime?
+  observaciones  String?
+  costoTotal     Float              @default(0)
+  userId         String
+  user           User               @relation(fields: [userId], references: [id])
+  items          PurchaseOrderItem[]
+  createdAt      DateTime           @default(now())
+
+  @@index([estado])
+}
+
+model PurchaseOrderItem {
+  id                String        @id @default(uuid())
+  purchaseOrderId   String
+  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  productoId        String
+  producto          Product       @relation(fields: [productoId], references: [id])
+  cantidadSolicitada Float
+  cantidadRecibida  Float?
+  costoUnitario     Float
+
+  @@unique([purchaseOrderId, productoId])
+}
+
+// ============================================================
+// ALERTAS
+// ============================================================
+
+model Alert {
+  id         String       @id @default(uuid())
+  tipo       TipoAlert
+  titulo     String
+  mensaje    String
+  productoId String?
+  producto   Product?     @relation(fields: [productoId], references: [id])
+  usuarioId  String?
+  usuario    User?        @relation(fields: [usuarioId], references: [id])
+  estado     EstadoAlert  @default(NUEVA)
+  createdAt  DateTime     @default(now())
+
+  @@index([estado])
+  @@index([tipo])
+}
